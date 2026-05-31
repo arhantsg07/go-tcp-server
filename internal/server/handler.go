@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"time"
 )
 
@@ -13,35 +14,35 @@ import (
 // these methods are implemented by the net.Conn type
 
 type MessageHandler interface {
-	ReadMessage(buffer []byte) (int, error)
+	ReadMessage() (string, error)
 	SendMessage(msg Message) error
 }
 
 type Message struct {
-	Timestamp time.Time
-	Text      string
+	Timestamp time.Time `json:"timestamp"`
+	Text      string	`json:"text"`
 }
 
-func (c *Connection) ReadMessage(buffer []byte) (int, error) {
+func (c *Connection) ReadMessage() (string, error) {
 	c.conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 
-	n, err := c.conn.Read(buffer)
+	msg, err := c.reader.ReadString('\n')
 
 	if err != nil {
 		if nErr, ok := err.(net.Error); ok && nErr.Timeout() {
 			// fmt.Println("client timed out: ", nErr)
-			return n, nErr
+			return "", nErr
 		}
 
 		if err == io.EOF {
 			fmt.Println("client disconnected")
-			return n, err
+			return "", err
 		}
 
-		return n, err
+		return "", err
 	}
 	// successfully read/ complete, no error
-	return n, nil
+	return strings.TrimSpace(msg)	, nil
 }
 
 func (c *Connection) SendMessage(msg Message) error {
