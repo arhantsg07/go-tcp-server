@@ -2,7 +2,11 @@
 
 package server
 
+import "sync"
+
 type Server struct {
-	ip string
-	port string
+	ip     string
+	port   string
+	client map[string]*Connection
+	mu     sync.Mutex
 }
