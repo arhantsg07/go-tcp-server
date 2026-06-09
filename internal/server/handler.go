@@ -6,51 +6,54 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"strings"
 	"time"
+	"github.com/arhantsg07/go-tcp-server/internal/protocol"
 )
+
+// adding message type to understand the type of communication
 
 // declared the two functions as the part of ths msg handling interface
 // these methods are implemented by the net.Conn type
 
 type MessageHandler interface {
-	ReadMessage() (string, error)
-	SendMessage(msg Message) error
+	ReadMessage() (protocol.Message, error)
+	SendMessage(msg protocol.Message) error
 }
 
-type Message struct {
-	Timestamp time.Time `json:"timestamp"`
-	Text      string	`json:"text"`
-}
-
-func (c *Connection) ReadMessage() (string, error) {
+func (c *Connection) ReadMessage() (protocol.Message, error) {
 	c.conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 
-	msg, err := c.reader.ReadString('\n')
-
+	raw, err := c.reader.ReadBytes('\n')
 	if err != nil {
 		if nErr, ok := err.(net.Error); ok && nErr.Timeout() {
-			// fmt.Println("client timed out: ", nErr)
-			return "", nErr
+			return protocol.Message{}, nErr
 		}
-
 		if err == io.EOF {
 			fmt.Println("client disconnected")
-			return "", err
+			return protocol.Message{}, err
 		}
-
-		return "", err
+		return protocol.Message{}, err
 	}
-	// successfully read/ complete, no error
-	return strings.TrimSpace(msg)	, nil
+
+	data, err := protocol.Decode(raw)
+	if err != nil {
+		return protocol.Message{}, fmt.Errorf("decode error: %w", err)
+	}
+
+	// successfully read and decoded
+	return data, nil
 }
 
-func (c *Connection) SendMessage(msg Message) error {
+func (c *Connection) SendMessage(msg protocol.Message) error {
 	c.conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
 
+	// formatted := fmt.Sprintf("From %s to %s (%s) : %s\n", msg.From, msg.To, msg.Timestamp.Format(time.RFC3339), msg.Text)
+	data, err := protocol.Encode(msg)
+	if err != nil {
+		return err
+	}
 
-	formatted := fmt.Sprintf("From Server (%s) : %s\n", msg.Timestamp.Format(time.RFC3339), msg.Text)
-	_, err := c.conn.Write([]byte(formatted))
+	_, err = c.conn.Write(data)
 	if err != nil {
 		fmt.Println("Write error: ", err)
 		return err
