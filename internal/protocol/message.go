@@ -13,6 +13,7 @@ const (
 	MessageTypeHeartbeat  MessageType = "HEARTBEAT"
 	MessageTypeDisconnect MessageType = "DISCONNECT"
 	MessageTypeError      MessageType = "ERROR"
+	MessageTypeList       MessageType = "LIST" // request a list of online users
 )
 
 type Message struct {
