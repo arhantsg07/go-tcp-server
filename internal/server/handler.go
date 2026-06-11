@@ -1,4 +1,4 @@
-// moved the message handling (read / write) from connection.go to handler.go
+// handler.go - low-level read/write methods on Connection, and the MessageHandler interface.
 
 package server
 
@@ -7,19 +7,19 @@ import (
 	"io"
 	"net"
 	"time"
+
 	"github.com/arhantsg07/go-tcp-server/internal/protocol"
 )
 
-// adding message type to understand the type of communication
-
-// declared the two functions as the part of ths msg handling interface
-// these methods are implemented by the net.Conn type
-
+// MessageHandler is the interface for reading and writing protocol messages.
+// Implementing it as an interface enables the middleware decorator pattern.
 type MessageHandler interface {
 	ReadMessage() (protocol.Message, error)
 	SendMessage(msg protocol.Message) error
 }
 
+// ReadMessage reads the next newline-delimited JSON frame from the connection.
+// It enforces a 30-second read deadline to detect stale/dead clients.
 func (c *Connection) ReadMessage() (protocol.Message, error) {
 	c.conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 
@@ -29,34 +29,42 @@ func (c *Connection) ReadMessage() (protocol.Message, error) {
 			return protocol.Message{}, nErr
 		}
 		if err == io.EOF {
-			fmt.Println("client disconnected")
 			return protocol.Message{}, err
 		}
 		return protocol.Message{}, err
 	}
 
-	data, err := protocol.Decode(raw)
+	// Track raw bytes received for throughput metrics.
+	if c.metrics != nil {
+		c.metrics.BytesReceived.Add(int64(len(raw)))
+	}
+
+	msg, err := protocol.Decode(raw)
 	if err != nil {
 		return protocol.Message{}, fmt.Errorf("decode error: %w", err)
 	}
-
-	// successfully read and decoded
-	return data, nil
+	return msg, nil
 }
 
+// SendMessage encodes a Message as JSON and writes it to the connection.
+// writeMu ensures only one goroutine writes at a time (heartbeat + broadcast can race).
 func (c *Connection) SendMessage(msg protocol.Message) error {
-	c.conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 
-	// formatted := fmt.Sprintf("From %s to %s (%s) : %s\n", msg.From, msg.To, msg.Timestamp.Format(time.RFC3339), msg.Text)
 	data, err := protocol.Encode(msg)
 	if err != nil {
 		return err
 	}
 
-	_, err = c.conn.Write(data)
+	c.conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
+	n, err := c.conn.Write(data)
 	if err != nil {
-		fmt.Println("Write error: ", err)
 		return err
+	}
+
+	if c.metrics != nil {
+		c.metrics.BytesSent.Add(int64(n))
 	}
 	return nil
 }
