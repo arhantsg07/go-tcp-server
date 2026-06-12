@@ -1,42 +1,45 @@
 package server
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"net"
 )
 
-// the function to import into the main to create the Server
-// this function returns a pointer to the server struct type
-// adding the add string as the address to the addr field
-func New(ip, port string) *Server {
-	return &Server{
-		ip:   ip,
-		port: port,
-	}
-}
-
-// Start function that actually powers on the server to listen
-// and then accept the connections
-func (s *Server) Start() error {
-	listener, err := net.Listen("tcp", s.ip+":"+s.port)
+// Start begins accepting connections on s.ip:s.port.
+// It blocks until ctx is cancelled, at which point it closes the listener and
+// returns nil — allowing the caller to treat a clean shutdown as a non-error.
+func (s *Server) Start(ctx context.Context) error {
+	addr := s.ip + ":" + s.port
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
+	log.Printf("TCP server listening on %s", addr)
 
-	// we defer the close function, it executes only when the neighbouring
-	// functions return
-	defer listener.Close()
+	// Close the listener when the context is cancelled. This unblocks Accept
+	// below and lets the loop detect the shutdown signal.
+	go func() {
+		<-ctx.Done()
+		log.Println("shutdown signal received — closing listener")
+		listener.Close()
+	}()
 
-	// Now we create a while loop to handle multiple connections
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			log.Println("Error accepting connection: ", err)
-			continue
-		} else {
-			log.Printf("Client connected: %v\n", conn.RemoteAddr())
+			select {
+			case <-ctx.Done():
+				log.Println("server shut down gracefully")
+				return nil
+			default:
+				log.Println("accept error:", err)
+				continue
+			}
 		}
-		newConn := NewConn(conn)
-		go HandleConnection(newConn)
+		log.Printf("new connection from %s", conn.RemoteAddr())
+		newConn := NewConn(conn, s.metrics)
+		go s.HandleConnection(newConn)
 	}
 }
